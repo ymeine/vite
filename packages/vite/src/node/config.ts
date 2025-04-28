@@ -1854,6 +1854,33 @@ async function bundleAndLoadConfigFile(resolvedPath: string) {
   }
 }
 
+function proxyImportMeta(importMetaProxyVarName: string, filename: string) {
+  const dirname = path.dirname(filename)
+  const fileBasename = path.basename(filename)
+  const fileUrl = pathToFileURL(filename).href
+
+  function generateProperty(key: string) {
+    if (['dir', 'dirname'].includes(key)) return `${key}: ${dirname}`
+    if (key === 'filename') return `${key}: ${filename}`
+    if (key === 'file') return `${key}: ${fileBasename}`
+    if (key === 'url') return `${key}: ${fileUrl}`
+
+    if (['require', 'resolve', 'resolveSync'].includes(key))
+      return `${key}() { throw new Error('import.meta.${key} is not supported in bundled config files') }`
+
+    const value = (import.meta as any)[key]
+    if (typeof value === 'function')
+      return `${key}: (...args) => import.meta.${key}(...args)`
+    return `get ${key}() { return import.meta.${key} }`
+  }
+
+  return [
+    `const ${importMetaProxyVarName} = {`,
+    ...Object.keys(import.meta).map((key) => `  ${generateProperty(key)},`),
+    `}`,
+  ].join('\n')
+}
+
 async function bundleConfigFile(
   fileName: string,
   isESM: boolean,
@@ -1863,7 +1890,7 @@ async function bundleConfigFile(
 
   const dirnameVarName = '__vite_injected_original_dirname'
   const filenameVarName = '__vite_injected_original_filename'
-  const importMetaUrlVarName = '__vite_injected_original_import_meta_url'
+  const importMetaProxyVarName = '__vite_injected_import_meta_proxy'
   const result = await build({
     absWorkingDir: process.cwd(),
     entryPoints: [fileName],
@@ -1880,9 +1907,7 @@ async function bundleConfigFile(
     define: {
       __dirname: dirnameVarName,
       __filename: filenameVarName,
-      'import.meta.url': importMetaUrlVarName,
-      'import.meta.dirname': dirnameVarName,
-      'import.meta.filename': filenameVarName,
+      'import.meta': importMetaProxyVarName,
     },
     plugins: [
       {
@@ -1981,9 +2006,7 @@ async function bundleConfigFile(
                 path.dirname(args.path),
               )};` +
               `const ${filenameVarName} = ${JSON.stringify(args.path)};` +
-              `const ${importMetaUrlVarName} = ${JSON.stringify(
-                pathToFileURL(args.path).href,
-              )};`
+              proxyImportMeta(importMetaProxyVarName, args.path)
 
             return {
               loader: args.path.endsWith('ts') ? 'ts' : 'js',
