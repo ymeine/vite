@@ -1858,6 +1858,7 @@ class ProxyImportMetaVariablesManager {
   // to ensure unique variable names in generated code
   static readonly guid = '5aa6825e_dad8_4150_85cf_cc17535c2a89'
   static readonly varRealImportMeta = `importMeta_${ProxyImportMetaVariablesManager.guid}`
+  static readonly varImportMetaProxy = `importMetaProxy_${ProxyImportMetaVariablesManager.guid}`
 
   readonly varProcess = `process_${ProxyImportMetaVariablesManager.guid}`
   readonly varModule = `module_${ProxyImportMetaVariablesManager.guid}`
@@ -1886,11 +1887,13 @@ class ProxyImportMetaVariablesManager {
   }
 }
 
-class ProxyImportMeta {
-  readonly isEsm: boolean
-  readonly filePathValue: string
-  readonly importMetaProxyVarName: string
+class ProxyImportMetaInCommonJs {
+  generate() {
+    return `const ${ProxyImportMetaVariablesManager.varImportMetaProxy} = function() { throw new Error('import.meta is not supported in CommonJS') }`
+  }
+}
 
+class ProxyImportMeta {
   readonly dirname: string
   readonly filePath: string
   readonly fileBasename: string
@@ -1899,22 +1902,14 @@ class ProxyImportMeta {
   readonly meta: any
   readonly imports: ProxyImportMetaVariablesManager
 
-  constructor(
-    filePathValue: string,
-    importMetaProxyVarName: string,
-    isESM: boolean,
-  ) {
-    this.filePathValue = filePathValue
-    this.importMetaProxyVarName = importMetaProxyVarName
-    this.isEsm = isESM
-
-    this.dirname = JSON.stringify(path.dirname(this.filePathValue))
-    this.filePath = JSON.stringify(this.filePathValue)
-    this.fileBasename = JSON.stringify(path.basename(this.filePathValue))
-    this.fileUrl = JSON.stringify(pathToFileURL(this.filePathValue).href)
+  constructor(filePathValue: string) {
+    this.dirname = JSON.stringify(path.dirname(filePathValue))
+    this.filePath = JSON.stringify(filePathValue)
+    this.fileBasename = JSON.stringify(path.basename(filePathValue))
+    this.fileUrl = JSON.stringify(pathToFileURL(filePathValue).href)
 
     this.meta = import.meta as any
-    this.imports = new ProxyImportMetaVariablesManager(this.filePathValue)
+    this.imports = new ProxyImportMetaVariablesManager(filePathValue)
   }
 
   getImportMetaKeys() {
@@ -1947,22 +1942,16 @@ class ProxyImportMeta {
 
     if (key === 'main') {
       // FIXME 2025-04-29T04:06:38+02:00@Europe/Paris
-      // `import.meta.filename` and `require.main.filename` are not exactly equivalent.
-      // In bundling mode, where the output is a single file, yes `import.meta` and `require.main` are
-      // equivalent.
-      // But in a mode that just transpiles files one by one, import.meta will be the contextual
-      // instance (the one of the file), while require.main will remain a reference to the entry
-      // point module.
-      // However, I don't know an equivalent of `require.main` in ESM. I should therefore check the
-      // actual mode: bundled vs not bundled. If the former, current implementation is correct.
+      // In a mode that just transpiles files one by one, `import.meta` will be the contextual
+      // instance (the one of the file), unlike in bundled mode where it will be a reference to the
+      // entry point module.
+      // I don't know an equivalent of `require.main` in ESM. I should therefore check the
+      // actual mode: bundled vs not bundled. If the former case, current implementation is correct.
       // If the latter, just proxying to the original `import.meta.main` would be the solution.
-      const holder = this.isEsm
-        ? ProxyImportMetaVariablesManager.varRealImportMeta
-        : 'require.main'
-      return `get ${key}() { return ${holder}.filename === ${this.filePath} }`
+      return `get ${key}() { return ${ProxyImportMetaVariablesManager.varRealImportMeta}.filename === ${this.filePath} }`
     }
 
-    return `get ${key}() { throw new Error('${ProxyImportMetaVariablesManager.varRealImportMeta}.${key} is not supported in bundled config files') }`
+    return `get ${key}() { throw new Error('import.meta.${key} is not supported in bundled config files') }`
   }
 
   generate() {
@@ -1975,7 +1964,7 @@ class ProxyImportMeta {
     return [
       ...this.imports.generate(),
       '',
-      `const ${this.importMetaProxyVarName} = {`,
+      `const ${ProxyImportMetaVariablesManager.varImportMetaProxy} = {`,
       ...properties,
       `};`,
       '',
@@ -1992,7 +1981,21 @@ async function bundleConfigFile(
 
   const dirnameVarName = '__vite_injected_original_dirname'
   const filenameVarName = '__vite_injected_original_filename'
-  const importMetaProxyVarName = '__vite_injected_import_meta_proxy'
+
+  // __dirname and __filename should not be available in ESM, but we can't remove this for
+  // backwards compatibility reasons
+  const define: Record<string, string> = {
+    __dirname: dirnameVarName,
+    __filename: filenameVarName,
+  }
+  if (isESM) {
+    define['import.meta'] = ProxyImportMetaVariablesManager.varImportMetaProxy
+    define[ProxyImportMetaVariablesManager.varRealImportMeta] = `import.meta` // for the generated proxy code
+  } else {
+    define['import.meta'] =
+      `${ProxyImportMetaVariablesManager.varImportMetaProxy}()` // generated code will throw an error
+  }
+
   const result = await build({
     absWorkingDir: process.cwd(),
     entryPoints: [fileName],
@@ -2006,12 +2009,7 @@ async function bundleConfigFile(
     // the last slash is needed to make the path correct
     sourceRoot: path.dirname(fileName) + path.sep,
     metafile: true,
-    define: {
-      __dirname: dirnameVarName,
-      __filename: filenameVarName,
-      'import.meta': importMetaProxyVarName,
-      [ProxyImportMetaVariablesManager.varRealImportMeta]: `import.meta`,
-    },
+    define,
     plugins: [
       {
         name: 'externalize-deps',
@@ -2104,11 +2102,9 @@ async function bundleConfigFile(
         setup(build) {
           build.onLoad({ filter: /\.[cm]?[jt]s$/ }, async (args) => {
             const contents = await fsp.readFile(args.path, 'utf-8')
-            const proxyImportMeta = new ProxyImportMeta(
-              args.path,
-              importMetaProxyVarName,
-              isESM,
-            )
+            const proxyImportMeta = isESM
+              ? new ProxyImportMeta(args.path)
+              : new ProxyImportMetaInCommonJs()
             const injectValues =
               `const ${dirnameVarName} = ${JSON.stringify(
                 path.dirname(args.path),
