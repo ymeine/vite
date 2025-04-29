@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url'
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export class ProxyImportMetaVariablesManager {
+class ProxyImportMetaVariablesManager {
   // to ensure unique variable names in generated code
   static readonly guid = '5aa6825e_dad8_4150_85cf_cc17535c2a89'
   static readonly varRealImportMeta = `importMeta_${ProxyImportMetaVariablesManager.guid}`
@@ -58,7 +58,7 @@ export class ProxyImportMetaInCommonJs {
 //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export class ProxyImportMeta {
+export class ProxyImportMetaInEsm {
   static getDefines(): Record<string, string> {
     return {
       'import.meta': ProxyImportMetaVariablesManager.varImportMetaProxy,
@@ -90,6 +90,11 @@ export class ProxyImportMeta {
     return Object.keys(Object.getPrototypeOf(this.meta))
   }
 
+  // FIXME 2025-04-29T08:34:42+02:00@Europe/Paris
+  // Since this hardcodes all known properties in the end, better just generate all those keys,
+  // it would make clearer code. It may produce too much code though.
+  // Also, can I be sure that the runtime used to bundle the configuration file will be the one used
+  // to run it?
   private generateProperty(key: string) {
     if (['dir', 'dirname'].includes(key)) return `${key}: ${this.dirname}`
     if (['filename', 'path'].includes(key)) return `${key}: ${this.filePath}`

@@ -104,8 +104,8 @@ import { createIdResolver } from './idResolver'
 import { runnerImport } from './ssr/runnerImport'
 import { getAdditionalAllowedHosts } from './server/middlewares/hostCheck'
 import {
-  ProxyImportMeta,
   ProxyImportMetaInCommonJs,
+  ProxyImportMetaInEsm,
 } from './config/proxyImportMeta'
 
 const debug = createDebugger('vite:config', { depth: 10 })
@@ -1877,7 +1877,7 @@ async function bundleConfigFile(
   Object.assign(
     define,
     isESM
-      ? ProxyImportMeta.getDefines()
+      ? ProxyImportMetaInEsm.getDefines()
       : ProxyImportMetaInCommonJs.getDefines(),
   )
 
@@ -1988,7 +1988,7 @@ async function bundleConfigFile(
           build.onLoad({ filter: /\.[cm]?[jt]s$/ }, async (args) => {
             const contents = await fsp.readFile(args.path, 'utf-8')
             const proxyImportMeta = isESM
-              ? new ProxyImportMeta(args.path)
+              ? new ProxyImportMetaInEsm(args.path)
               : new ProxyImportMetaInCommonJs()
             const injectValues =
               `const ${dirnameVarName} = ${JSON.stringify(
