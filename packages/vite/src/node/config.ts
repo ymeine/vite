@@ -1946,6 +1946,16 @@ class ProxyImportMeta {
     }
 
     if (key === 'main') {
+      // FIXME 2025-04-29T04:06:38+02:00@Europe/Paris
+      // `import.meta.filename` and `require.main.filename` are not exactly equivalent.
+      // In bundling mode, where the output is a single file, yes `import.meta` and `require.main` are
+      // equivalent.
+      // But in a mode that just transpiles files one by one, import.meta will be the contextual
+      // instance (the one of the file), while require.main will remain a reference to the entry
+      // point module.
+      // However, I don't know an equivalent of `require.main` in ESM. I should therefore check the
+      // actual mode: bundled vs not bundled. If the former, current implementation is correct.
+      // If the latter, just proxying to the original `import.meta.main` would be the solution.
       const holder = this.isEsm
         ? ProxyImportMetaVariablesManager.varRealImportMeta
         : 'require.main'
@@ -1956,13 +1966,17 @@ class ProxyImportMeta {
   }
 
   generate() {
+    // it's important to keep this before `this.imports.generate`, since `this.generateProperty` has a
+    // side effect affecting the output of `this.imports.generate`.
+    const properties = this.getImportMetaKeys().map(
+      (key) => `  ${this.generateProperty(key)},`,
+    )
+
     return [
       ...this.imports.generate(),
       '',
       `const ${this.importMetaProxyVarName} = {`,
-      ...this.getImportMetaKeys().map(
-        (key) => `  ${this.generateProperty(key)},`,
-      ),
+      ...properties,
       `};`,
       '',
     ].join('\n')
@@ -2101,7 +2115,6 @@ async function bundleConfigFile(
               )};` +
               `const ${filenameVarName} = ${JSON.stringify(args.path)};` +
               proxyImportMeta.generate()
-            // console.log(injectValues)
 
             return {
               loader: args.path.endsWith('ts') ? 'ts' : 'js',
