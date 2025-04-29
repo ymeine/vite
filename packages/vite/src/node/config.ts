@@ -1924,10 +1924,6 @@ class ProxyImportMeta {
     return Object.keys(Object.getPrototypeOf(this.meta))
   }
 
-  // FIXME 2025-04-28T09:42:40+02:00@Europe/Paris
-  // Any code using `import.meta` (in ESM mode) must ensure that occurrence is not replaced by the
-  // define plugin... I could trick bu outputting a unique piece of code, and adding it to teh define plugin,
-  // like `realImportMeta: 'import.meta'`
   generateProperty(key: string) {
     if (['dir', 'dirname'].includes(key)) return `${key}: ${this.dirname}`
     if (['filename', 'path'].includes(key)) return `${key}: ${this.filePath}`
@@ -1939,10 +1935,7 @@ class ProxyImportMeta {
       return `get ${key}() { return ${this.imports.varProcess}.env }`
     }
 
-    if (['resolve', 'require'].includes(key)) {
-      if (this.isEsm)
-        return `${key}(...args) { return ${ProxyImportMetaVariablesManager.varRealImportMeta}.${key}(...args) }`
-
+    if (['resolve', 'resolveSync'].includes(key)) {
       this.imports.createRequire = true
       return `${key}(...args) { return ${this.imports.varRequire}.${key}(...args) }`
     }
@@ -1953,18 +1946,16 @@ class ProxyImportMeta {
     }
 
     if (key === 'main') {
-      if (this.isEsm)
-        return `get ${key}() { return ${ProxyImportMetaVariablesManager.varRealImportMeta}.${key} }`
-
-      this.imports.createRequire = true
-      return `get ${key}() { return ${this.imports.varRequire}.${key} === module }`
+      const holder = this.isEsm
+        ? ProxyImportMetaVariablesManager.varRealImportMeta
+        : 'require.main'
+      return `get ${key}() { return ${holder}.filename === ${this.filePath} }`
     }
 
     return `get ${key}() { throw new Error('${ProxyImportMetaVariablesManager.varRealImportMeta}.${key} is not supported in bundled config files') }`
   }
 
   generate() {
-    // console.log('isESM?', this.isEsm)
     return [
       ...this.imports.generate(),
       '',
@@ -1977,73 +1968,6 @@ class ProxyImportMeta {
     ].join('\n')
   }
 }
-
-// function getImportMetaKeys() {
-//   const keys = Object.keys(import.meta)
-//   if (keys.length > 0) return keys
-//   // in Bun, getting keys on the object directly does not work
-//   return Object.keys(Object.getPrototypeOf(import.meta))
-// }
-
-// // FIXME 2025-04-28T06:34:38+02:00@Europe/Paris
-// // Creating a proxy over `import.meta` is not possible, since this implies keeping references to
-// // `import.meta` inside the generated code.
-// // That is an issue since some configuration files use the CommonJS format, where using
-// // `import.meta` is not possible.
-// // A solution would be to serialize everything, but this is not possible for functions and shared
-// // objects. Example: `import.meta.env`.
-// // Another solution would be to generate a specific proxy per known runtime (Node.js, Deno, Bun),
-// // but it has a few issues:
-// // - we cannot know all runtimes ahead (though they must be Node.js compatible)
-// // - runtimes will evolve independently, which makes it harder to maintain
-// // FIXME 2025-04-28T06:44:12+02:00@Europe/Paris
-// // In any case, I still need to handle the case of CommonJS vs ESM, since this code right here
-// // may be invoked in either mode depending on the user side project setup.
-// function proxyImportMeta(importMetaProxyVarName: string, filePathValue: string) {
-//   const dirname = JSON.stringify(path.dirname(filePathValue))
-//   const filePath = JSON.stringify(filePathValue)
-//   const fileBasename = JSON.stringify(path.basename(filePathValue))
-//   const fileUrl = JSON.stringify(pathToFileURL(filePathValue).href)
-
-//   const metaAny = import.meta as any
-//   function generateProperty(key: string) {
-//     if (['dir', 'dirname'].includes(key)) return `${key}: ${dirname}`
-//     if (['filename', 'path'].includes(key)) return `${key}: ${filePath}`
-//     if (key === 'file') return `${key}: ${fileBasename}`
-//     if (key === 'url') return `${key}: ${fileUrl}`
-
-//     if (key === 'main') return `${key}: ${JSON.stringify(metaAny.main)}`
-//     // FIXME 2025-04-28T07:51:46+02:00@Europe/Paris
-//     // May need to import from "node:process", but handling imports in this generated code is a bit more complex.
-//     if (key === 'env') return `get ${key}() { return process.env }`
-
-//     if (key === 'resolve') return `async ${key}(...args) { return require.resolve(...args) }`
-//     if (key === 'resolveSync') return `${key}(...args) { return require.resolve(...args) }`
-//     if (key === 'require') return `async ${key}(...args) { return require(...args) }`
-
-//     // FIXME 2025-04-28T08:26:14+02:00@Europe/Paris
-//     // Those could be shimmed, but are dependent on the runtime.
-//     // To be cross-runtime, maybe use `module.createRequire()` to ensure a `require` object with a
-//     // `resolve` method.
-//     // if (['require'].includes(key))
-//     //   return `${key}() { throw new Error('import.meta.${key}(...) is not supported in bundled config files') }`
-
-//     return `get ${key}() { throw new Error('import.meta.${key} is not supported in bundled config files') }`
-//     // const value = (import.meta as any)[key]
-//     // if (typeof value === 'function')
-//     //   return `${key}: (...args) => import.meta.${key}(...args)`
-//     // return `get ${key}() { return import.meta.${key} }`
-//   }
-
-//   return [
-//     `import { createRequire } from 'node:module';`,
-//     `const require = createRequire(${filePath});`,
-//     `const ${importMetaProxyVarName} = {`,
-//     ...getImportMetaKeys().map((key) => `  ${generateProperty(key)},`),
-//     `};`,
-//     '',
-//   ].join('\n')
-// }
 
 async function bundleConfigFile(
   fileName: string,
