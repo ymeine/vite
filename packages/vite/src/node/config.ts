@@ -1854,32 +1854,196 @@ async function bundleAndLoadConfigFile(resolvedPath: string) {
   }
 }
 
-function proxyImportMeta(importMetaProxyVarName: string, filename: string) {
-  const dirname = path.dirname(filename)
-  const fileBasename = path.basename(filename)
-  const fileUrl = pathToFileURL(filename).href
+class ProxyImportMetaVariablesManager {
+  // to ensure unique variable names in generated code
+  static readonly guid = '5aa6825e_dad8_4150_85cf_cc17535c2a89'
+  static readonly varRealImportMeta = `importMeta_${ProxyImportMetaVariablesManager.guid}`
 
-  function generateProperty(key: string) {
-    if (['dir', 'dirname'].includes(key)) return `${key}: ${dirname}`
-    if (key === 'filename') return `${key}: ${filename}`
-    if (key === 'file') return `${key}: ${fileBasename}`
-    if (key === 'url') return `${key}: ${fileUrl}`
+  readonly varProcess = `process_${ProxyImportMetaVariablesManager.guid}`
+  readonly varModule = `module_${ProxyImportMetaVariablesManager.guid}`
+  readonly varRequire = `require_${ProxyImportMetaVariablesManager.guid}`
 
-    if (['require', 'resolve', 'resolveSync'].includes(key))
-      return `${key}() { throw new Error('import.meta.${key} is not supported in bundled config files') }`
+  readonly parentModule: string
 
-    const value = (import.meta as any)[key]
-    if (typeof value === 'function')
-      return `${key}: (...args) => import.meta.${key}(...args)`
-    return `get ${key}() { return import.meta.${key} }`
+  importProcess = false
+  createRequire = false
+
+  constructor(parentModule: string) {
+    this.parentModule = parentModule
   }
 
-  return [
-    `const ${importMetaProxyVarName} = {`,
-    ...Object.keys(import.meta).map((key) => `  ${generateProperty(key)},`),
-    `}`,
-  ].join('\n')
+  generate() {
+    const lines: string[] = []
+    if (this.importProcess)
+      lines.push(`import * as ${this.varProcess} from 'node:process'`)
+    if (this.createRequire) {
+      lines.push(`import * as ${this.varModule} from 'node:module'`)
+      lines.push(
+        `const ${this.varRequire} = ${this.varModule}.createRequire(${JSON.stringify(this.parentModule)})`,
+      )
+    }
+    return lines
+  }
 }
+
+class ProxyImportMeta {
+  readonly isEsm: boolean
+  readonly filePathValue: string
+  readonly importMetaProxyVarName: string
+
+  readonly dirname: string
+  readonly filePath: string
+  readonly fileBasename: string
+  readonly fileUrl: string
+
+  readonly meta: any
+  readonly imports: ProxyImportMetaVariablesManager
+
+  constructor(
+    filePathValue: string,
+    importMetaProxyVarName: string,
+    isESM: boolean,
+  ) {
+    this.filePathValue = filePathValue
+    this.importMetaProxyVarName = importMetaProxyVarName
+    this.isEsm = isESM
+
+    this.dirname = JSON.stringify(path.dirname(this.filePathValue))
+    this.filePath = JSON.stringify(this.filePathValue)
+    this.fileBasename = JSON.stringify(path.basename(this.filePathValue))
+    this.fileUrl = JSON.stringify(pathToFileURL(this.filePathValue).href)
+
+    this.meta = import.meta as any
+    this.imports = new ProxyImportMetaVariablesManager(this.filePathValue)
+  }
+
+  getImportMetaKeys() {
+    const keys = Object.keys(this.meta)
+    if (keys.length > 0) return keys
+    // in Bun, getting keys on the object directly does not work
+    return Object.keys(Object.getPrototypeOf(this.meta))
+  }
+
+  // FIXME 2025-04-28T09:42:40+02:00@Europe/Paris
+  // Any code using `import.meta` (in ESM mode) must ensure that occurrence is not replaced by the
+  // define plugin... I could trick bu outputting a unique piece of code, and adding it to teh define plugin,
+  // like `realImportMeta: 'import.meta'`
+  generateProperty(key: string) {
+    if (['dir', 'dirname'].includes(key)) return `${key}: ${this.dirname}`
+    if (['filename', 'path'].includes(key)) return `${key}: ${this.filePath}`
+    if (key === 'file') return `${key}: ${this.fileBasename}`
+    if (key === 'url') return `${key}: ${this.fileUrl}`
+
+    if (key === 'env') {
+      this.imports.importProcess = true
+      return `get ${key}() { return ${this.imports.varProcess}.env }`
+    }
+
+    if (['resolve', 'require'].includes(key)) {
+      if (this.isEsm)
+        return `${key}(...args) { return ${ProxyImportMetaVariablesManager.varRealImportMeta}.${key}(...args) }`
+
+      this.imports.createRequire = true
+      return `${key}(...args) { return ${this.imports.varRequire}.${key}(...args) }`
+    }
+
+    if (key === 'require') {
+      this.imports.createRequire = true
+      return `${key}(...args) { return ${this.imports.varRequire}(...args) }`
+    }
+
+    if (key === 'main') {
+      if (this.isEsm)
+        return `get ${key}() { return ${ProxyImportMetaVariablesManager.varRealImportMeta}.${key} }`
+
+      this.imports.createRequire = true
+      return `get ${key}() { return ${this.imports.varRequire}.${key} === module }`
+    }
+
+    return `get ${key}() { throw new Error('${ProxyImportMetaVariablesManager.varRealImportMeta}.${key} is not supported in bundled config files') }`
+  }
+
+  generate() {
+    // console.log('isESM?', this.isEsm)
+    return [
+      ...this.imports.generate(),
+      '',
+      `const ${this.importMetaProxyVarName} = {`,
+      ...this.getImportMetaKeys().map(
+        (key) => `  ${this.generateProperty(key)},`,
+      ),
+      `};`,
+      '',
+    ].join('\n')
+  }
+}
+
+// function getImportMetaKeys() {
+//   const keys = Object.keys(import.meta)
+//   if (keys.length > 0) return keys
+//   // in Bun, getting keys on the object directly does not work
+//   return Object.keys(Object.getPrototypeOf(import.meta))
+// }
+
+// // FIXME 2025-04-28T06:34:38+02:00@Europe/Paris
+// // Creating a proxy over `import.meta` is not possible, since this implies keeping references to
+// // `import.meta` inside the generated code.
+// // That is an issue since some configuration files use the CommonJS format, where using
+// // `import.meta` is not possible.
+// // A solution would be to serialize everything, but this is not possible for functions and shared
+// // objects. Example: `import.meta.env`.
+// // Another solution would be to generate a specific proxy per known runtime (Node.js, Deno, Bun),
+// // but it has a few issues:
+// // - we cannot know all runtimes ahead (though they must be Node.js compatible)
+// // - runtimes will evolve independently, which makes it harder to maintain
+// // FIXME 2025-04-28T06:44:12+02:00@Europe/Paris
+// // In any case, I still need to handle the case of CommonJS vs ESM, since this code right here
+// // may be invoked in either mode depending on the user side project setup.
+// function proxyImportMeta(importMetaProxyVarName: string, filePathValue: string) {
+//   const dirname = JSON.stringify(path.dirname(filePathValue))
+//   const filePath = JSON.stringify(filePathValue)
+//   const fileBasename = JSON.stringify(path.basename(filePathValue))
+//   const fileUrl = JSON.stringify(pathToFileURL(filePathValue).href)
+
+//   const metaAny = import.meta as any
+//   function generateProperty(key: string) {
+//     if (['dir', 'dirname'].includes(key)) return `${key}: ${dirname}`
+//     if (['filename', 'path'].includes(key)) return `${key}: ${filePath}`
+//     if (key === 'file') return `${key}: ${fileBasename}`
+//     if (key === 'url') return `${key}: ${fileUrl}`
+
+//     if (key === 'main') return `${key}: ${JSON.stringify(metaAny.main)}`
+//     // FIXME 2025-04-28T07:51:46+02:00@Europe/Paris
+//     // May need to import from "node:process", but handling imports in this generated code is a bit more complex.
+//     if (key === 'env') return `get ${key}() { return process.env }`
+
+//     if (key === 'resolve') return `async ${key}(...args) { return require.resolve(...args) }`
+//     if (key === 'resolveSync') return `${key}(...args) { return require.resolve(...args) }`
+//     if (key === 'require') return `async ${key}(...args) { return require(...args) }`
+
+//     // FIXME 2025-04-28T08:26:14+02:00@Europe/Paris
+//     // Those could be shimmed, but are dependent on the runtime.
+//     // To be cross-runtime, maybe use `module.createRequire()` to ensure a `require` object with a
+//     // `resolve` method.
+//     // if (['require'].includes(key))
+//     //   return `${key}() { throw new Error('import.meta.${key}(...) is not supported in bundled config files') }`
+
+//     return `get ${key}() { throw new Error('import.meta.${key} is not supported in bundled config files') }`
+//     // const value = (import.meta as any)[key]
+//     // if (typeof value === 'function')
+//     //   return `${key}: (...args) => import.meta.${key}(...args)`
+//     // return `get ${key}() { return import.meta.${key} }`
+//   }
+
+//   return [
+//     `import { createRequire } from 'node:module';`,
+//     `const require = createRequire(${filePath});`,
+//     `const ${importMetaProxyVarName} = {`,
+//     ...getImportMetaKeys().map((key) => `  ${generateProperty(key)},`),
+//     `};`,
+//     '',
+//   ].join('\n')
+// }
 
 async function bundleConfigFile(
   fileName: string,
@@ -1908,6 +2072,7 @@ async function bundleConfigFile(
       __dirname: dirnameVarName,
       __filename: filenameVarName,
       'import.meta': importMetaProxyVarName,
+      [ProxyImportMetaVariablesManager.varRealImportMeta]: `import.meta`,
     },
     plugins: [
       {
@@ -2001,12 +2166,18 @@ async function bundleConfigFile(
         setup(build) {
           build.onLoad({ filter: /\.[cm]?[jt]s$/ }, async (args) => {
             const contents = await fsp.readFile(args.path, 'utf-8')
+            const proxyImportMeta = new ProxyImportMeta(
+              args.path,
+              importMetaProxyVarName,
+              isESM,
+            )
             const injectValues =
               `const ${dirnameVarName} = ${JSON.stringify(
                 path.dirname(args.path),
               )};` +
               `const ${filenameVarName} = ${JSON.stringify(args.path)};` +
-              proxyImportMeta(importMetaProxyVarName, args.path)
+              proxyImportMeta.generate()
+            // console.log(injectValues)
 
             return {
               loader: args.path.endsWith('ts') ? 'ts' : 'js',
@@ -2070,7 +2241,7 @@ async function loadConfigFromBundledFile(
     try {
       return (await import(pathToFileURL(tempFileName).href)).default
     } finally {
-      fs.unlink(tempFileName, () => {}) // Ignore errors
+      // fs.unlink(tempFileName, () => {}) // Ignore errors
     }
   }
   // for cjs, we can register a custom loader via `_require.extensions`
