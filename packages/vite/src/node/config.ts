@@ -1941,13 +1941,10 @@ class ProxyImportMeta {
     }
 
     if (key === 'main') {
-      // FIXME 2025-04-29T04:06:38+02:00@Europe/Paris
-      // In a mode that just transpiles files one by one, `import.meta` will be the contextual
-      // instance (the one of the file), unlike in bundled mode where it will be a reference to the
-      // entry point module.
-      // I don't know an equivalent of `require.main` in ESM. I should therefore check the
-      // actual mode: bundled vs not bundled. If the former case, current implementation is correct.
-      // If the latter, just proxying to the original `import.meta.main` would be the solution.
+      // Works since this code is generated in "bundled" mode, so `import.meta.filename` does point
+      // to the entry point file. Now, none of the user file will actually ever return true here,
+      // since the generated entry point file is at an internal path.
+      // I wonder if it should be set to true for `vite.config.{t,j}s`...
       return `get ${key}() { return ${ProxyImportMetaVariablesManager.varRealImportMeta}.filename === ${this.filePath} }`
     }
 
