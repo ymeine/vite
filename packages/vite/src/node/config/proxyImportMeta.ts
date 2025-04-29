@@ -43,6 +43,12 @@ export class ProxyImportMetaVariablesManager {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 export class ProxyImportMetaInCommonJs {
+  static getDefines(): Record<string, string> {
+    return {
+      'import.meta': `${ProxyImportMetaVariablesManager.varImportMetaProxy}()`, // generated code will throw an error
+    }
+  }
+
   generate(): string {
     return `const ${ProxyImportMetaVariablesManager.varImportMetaProxy} = function() { throw new Error('import.meta is not supported in CommonJS') }`
   }
@@ -53,6 +59,12 @@ export class ProxyImportMetaInCommonJs {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 export class ProxyImportMeta {
+  static getDefines(): Record<string, string> {
+    return {
+      'import.meta': ProxyImportMetaVariablesManager.varImportMetaProxy,
+      [ProxyImportMetaVariablesManager.varRealImportMeta]: `import.meta`, // for the generated proxy code
+    }
+  }
   readonly dirname: string
   readonly filePath: string
   readonly fileBasename: string

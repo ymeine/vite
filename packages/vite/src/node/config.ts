@@ -106,7 +106,6 @@ import { getAdditionalAllowedHosts } from './server/middlewares/hostCheck'
 import {
   ProxyImportMeta,
   ProxyImportMetaInCommonJs,
-  ProxyImportMetaVariablesManager,
 } from './config/proxyImportMeta'
 
 const debug = createDebugger('vite:config', { depth: 10 })
@@ -1875,13 +1874,12 @@ async function bundleConfigFile(
     __dirname: dirnameVarName,
     __filename: filenameVarName,
   }
-  if (isESM) {
-    define['import.meta'] = ProxyImportMetaVariablesManager.varImportMetaProxy
-    define[ProxyImportMetaVariablesManager.varRealImportMeta] = `import.meta` // for the generated proxy code
-  } else {
-    define['import.meta'] =
-      `${ProxyImportMetaVariablesManager.varImportMetaProxy}()` // generated code will throw an error
-  }
+  Object.assign(
+    define,
+    isESM
+      ? ProxyImportMeta.getDefines()
+      : ProxyImportMetaInCommonJs.getDefines(),
+  )
 
   const result = await build({
     absWorkingDir: process.cwd(),
