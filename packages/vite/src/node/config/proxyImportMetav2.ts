@@ -2,39 +2,19 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 class VariableFactory {
-  static readonly guid = '5aa6825e_dad8_4150_85cf_cc17535c2a89' // to ensure unique variable names in generated code
+  static readonly guid = '5aa6825e_dad8_4150_85cf_cc17535c2a89'
   make(name: string) {
     return `${name}_${VariableFactory.guid}`
   }
 }
 const variableFactory = new VariableFactory()
 
-class Context {
-  static readonly varImportMetaProxy = variableFactory.make('importMetaProxy')
+const VAR_IMPORT_META_PROXY = variableFactory.make('importMeta')
 
-  readonly varProcess = variableFactory.make('process')
-  readonly varModule = variableFactory.make('module')
-  readonly varRequire = variableFactory.make('require')
-
-  readonly parentModule: string
-
-  constructor(parentModule: string) {
-    this.parentModule = parentModule
-  }
-
-  getHeader() {
-    return `
-      import * as ${this.varProcess} from 'node:process'
-      import * as ${this.varModule} from 'node:module'
-      const ${this.varRequire} = ${this.varModule}.createRequire(${JSON.stringify(this.parentModule)})
-    `
-  }
-}
-
-export class ImportMetaProxy {
+export class ImportMetaShim {
   static getCodeReplacementDefinitions(): Record<string, string> {
     return {
-      'import.meta': Context.varImportMetaProxy,
+      'import.meta': VAR_IMPORT_META_PROXY,
     }
   }
 
@@ -48,21 +28,27 @@ export class ImportMetaProxy {
     const filePath = JSON.stringify(this.filePath)
     const fileBasename = JSON.stringify(path.basename(this.filePath))
     const fileUrl = JSON.stringify(pathToFileURL(this.filePath).href)
-    const context = new Context(this.filePath)
+
+    const varProcess = variableFactory.make('process')
+    const varModule = variableFactory.make('module')
+    const varRequire = variableFactory.make('require')
 
     return `
-      ${context.getHeader()}
-      const ${Context.varImportMetaProxy} = {
+      import * as ${varProcess} from 'node:process'
+      import * as ${varModule} from 'node:module'
+      const ${varRequire} = ${varModule}.createRequire(filePath)
+
+      const ${VAR_IMPORT_META_PROXY} = {
         dir: ${dirname},
         dirname: ${dirname},
         filename: ${filePath},
         path: ${filePath},
         file: ${fileBasename},
         url: ${fileUrl},
-        get env() { return ${context.varProcess}.env },
-        resolve(...args) { return ${context.varRequire}.resolve(...args) },
-        resolveSync(...args) { return ${context.varRequire}.resolveSync(...args) },
-        require(...args) { return ${context.varRequire}(...args) },
+        get env() { return ${varProcess}.env },
+        resolve(...args) { return ${varRequire}.resolve(...args) },
+        resolveSync(...args) { return ${varRequire}.resolveSync(...args) },
+        require(...args) { return ${varRequire}(...args) },
         main: false,
       }
     `

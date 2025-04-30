@@ -103,7 +103,7 @@ import { PartialEnvironment } from './baseEnvironment'
 import { createIdResolver } from './idResolver'
 import { runnerImport } from './ssr/runnerImport'
 import { getAdditionalAllowedHosts } from './server/middlewares/hostCheck'
-import { ImportMetaProxy } from './config/proxyImportMetav2'
+import { ImportMetaShim } from './config/proxyImportMetav2'
 
 const debug = createDebugger('vite:config', { depth: 10 })
 const promisifiedRealpath = promisify(fs.realpath)
@@ -1881,7 +1881,7 @@ async function bundleConfigFile(
     define: {
       __dirname: dirnameVarName,
       __filename: filenameVarName,
-      ...ImportMetaProxy.getCodeReplacementDefinitions(),
+      ...ImportMetaShim.getCodeReplacementDefinitions(),
     },
     plugins: [
       {
@@ -1975,13 +1975,13 @@ async function bundleConfigFile(
         setup(build) {
           build.onLoad({ filter: /\.[cm]?[jt]s$/ }, async (args) => {
             const contents = await fsp.readFile(args.path, 'utf-8')
-            const importMetaProxy = new ImportMetaProxy(args.path)
+            const importMeta = new ImportMetaShim(args.path)
             const injectValues =
               `const ${dirnameVarName} = ${JSON.stringify(
                 path.dirname(args.path),
               )};` +
               `const ${filenameVarName} = ${JSON.stringify(args.path)};` +
-              importMetaProxy.getCode()
+              importMeta.getCode()
 
             return {
               loader: args.path.endsWith('ts') ? 'ts' : 'js',
