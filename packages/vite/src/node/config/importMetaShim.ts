@@ -9,19 +9,16 @@ class VariableFactory {
 }
 const variableFactory = new VariableFactory()
 
-const VAR_IMPORT_META_PROXY = variableFactory.make('importMeta')
+const VAR_IMPORT_META = variableFactory.make('importMeta')
 
 export class ImportMetaShim {
   static getCodeReplacementDefinitions(): Record<string, string> {
     return {
-      'import.meta': VAR_IMPORT_META_PROXY,
+      'import.meta': VAR_IMPORT_META,
     }
   }
 
-  readonly filePath: string
-  constructor(filePath: string) {
-    this.filePath = filePath
-  }
+  constructor(readonly filePath: string) {}
 
   getCode(): string {
     const dirname = JSON.stringify(path.dirname(this.filePath))
@@ -38,7 +35,7 @@ export class ImportMetaShim {
       import * as ${varModule} from 'node:module'
       const ${varRequire} = ${varModule}.createRequire(${filePath})
 
-      const ${VAR_IMPORT_META_PROXY} = {
+      const ${VAR_IMPORT_META} = {
         dir: ${dirname},
         dirname: ${dirname},
         filename: ${filePath},
