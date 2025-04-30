@@ -10,7 +10,6 @@ class VariableFactory {
 const variableFactory = new VariableFactory()
 
 class Context {
-  static readonly varRealImportMeta = variableFactory.make('importMeta')
   static readonly varImportMetaProxy = variableFactory.make('importMetaProxy')
 
   readonly varProcess = variableFactory.make('process')
@@ -32,27 +31,10 @@ class Context {
   }
 }
 
-export class ImportMetaProxyInCommonJs {
-  static getDefines(): Record<string, string> {
-    return {
-      'import.meta': `${Context.varImportMetaProxy}.throwError`,
-    }
-  }
-
-  getCode(): string {
-    return `
-      const ${Context.varImportMetaProxy} = {
-        get throwError { throw new Error('import.meta is not supported in CommonJS') }
-      }
-    `
-  }
-}
-
-export class ImportMetaProxyInEsm {
-  static getDefines(): Record<string, string> {
+export class ImportMetaProxy {
+  static getCodeReplacementDefinitions(): Record<string, string> {
     return {
       'import.meta': Context.varImportMetaProxy,
-      [Context.varRealImportMeta]: `import.meta`, // for the generated proxy code
     }
   }
 
@@ -66,12 +48,10 @@ export class ImportMetaProxyInEsm {
     const filePath = JSON.stringify(this.filePath)
     const fileBasename = JSON.stringify(path.basename(this.filePath))
     const fileUrl = JSON.stringify(pathToFileURL(this.filePath).href)
-
     const context = new Context(this.filePath)
 
     return `
       ${context.getHeader()}
-
       const ${Context.varImportMetaProxy} = {
         dir: ${dirname},
         dirname: ${dirname},

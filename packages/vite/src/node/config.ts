@@ -103,10 +103,7 @@ import { PartialEnvironment } from './baseEnvironment'
 import { createIdResolver } from './idResolver'
 import { runnerImport } from './ssr/runnerImport'
 import { getAdditionalAllowedHosts } from './server/middlewares/hostCheck'
-import {
-  ImportMetaProxyInCommonJs,
-  ImportMetaProxyInEsm,
-} from './config/proxyImportMetav2'
+import { ImportMetaProxy } from './config/proxyImportMetav2'
 
 const debug = createDebugger('vite:config', { depth: 10 })
 const promisifiedRealpath = promisify(fs.realpath)
@@ -1868,17 +1865,6 @@ async function bundleConfigFile(
   const dirnameVarName = '__vite_injected_original_dirname'
   const filenameVarName = '__vite_injected_original_filename'
 
-  const ClassImportMetaProxy = isESM
-    ? ImportMetaProxyInEsm
-    : ImportMetaProxyInCommonJs
-  // __dirname and __filename should not be available in ESM, but we can't remove this for
-  // backwards compatibility reasons
-  const define = {
-    __dirname: dirnameVarName,
-    __filename: filenameVarName,
-    ...ClassImportMetaProxy.getDefines(),
-  }
-
   const result = await build({
     absWorkingDir: process.cwd(),
     entryPoints: [fileName],
@@ -1892,7 +1878,11 @@ async function bundleConfigFile(
     // the last slash is needed to make the path correct
     sourceRoot: path.dirname(fileName) + path.sep,
     metafile: true,
-    define,
+    define: {
+      __dirname: dirnameVarName,
+      __filename: filenameVarName,
+      ...ImportMetaProxy.getCodeReplacementDefinitions(),
+    },
     plugins: [
       {
         name: 'externalize-deps',
@@ -1985,7 +1975,7 @@ async function bundleConfigFile(
         setup(build) {
           build.onLoad({ filter: /\.[cm]?[jt]s$/ }, async (args) => {
             const contents = await fsp.readFile(args.path, 'utf-8')
-            const importMetaProxy = new ClassImportMetaProxy(args.path)
+            const importMetaProxy = new ImportMetaProxy(args.path)
             const injectValues =
               `const ${dirnameVarName} = ${JSON.stringify(
                 path.dirname(args.path),
@@ -2022,36 +2012,36 @@ async function loadConfigFromBundledFile(
   // for esm, before we can register loaders without requiring users to run node
   // with --experimental-loader themselves, we have to do a hack here:
   // write it to disk, load it with native Node ESM, then delete the file.
-  if (isESM) {
-    // Storing the bundled file in node_modules/ is avoided for Deno
-    // because Deno only supports Node.js style modules under node_modules/
-    // and configs with `npm:` import statements will fail when executed.
-    let nodeModulesDir =
-      typeof process.versions.deno === 'string'
-        ? undefined
-        : findNearestNodeModules(path.dirname(fileName))
-    if (nodeModulesDir) {
-      try {
-        await fsp.mkdir(path.resolve(nodeModulesDir, '.vite-temp/'), {
-          recursive: true,
-        })
-      } catch (e) {
-        if (e.code === 'EACCES') {
-          // If there is no access permission, a temporary configuration file is created by default.
-          nodeModulesDir = undefined
-        } else {
-          throw e
-        }
+  // Storing the bundled file in node_modules/ is avoided for Deno
+  // because Deno only supports Node.js style modules under node_modules/
+  // and configs with `npm:` import statements will fail when executed.
+  let nodeModulesDir =
+    typeof process.versions.deno === 'string'
+      ? undefined
+      : findNearestNodeModules(path.dirname(fileName))
+  if (nodeModulesDir) {
+    try {
+      await fsp.mkdir(path.resolve(nodeModulesDir, '.vite-temp/'), {
+        recursive: true,
+      })
+    } catch (e) {
+      if (e.code === 'EACCES') {
+        // If there is no access permission, a temporary configuration file is created by default.
+        nodeModulesDir = undefined
+      } else {
+        throw e
       }
     }
-    const hash = `timestamp-${Date.now()}-${Math.random().toString(16).slice(2)}`
-    const tempFileName = nodeModulesDir
-      ? path.resolve(
-          nodeModulesDir,
-          `.vite-temp/${path.basename(fileName)}.${hash}.mjs`,
-        )
-      : `${fileName}.${hash}.mjs`
-    await fsp.writeFile(tempFileName, bundledCode)
+  }
+  const hash = `timestamp-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const tempFileName = nodeModulesDir
+    ? path.resolve(
+        nodeModulesDir,
+        `.vite-temp/${path.basename(fileName)}.${hash}.mjs`,
+      )
+    : `${fileName}.${hash}.mjs`
+  await fsp.writeFile(tempFileName, bundledCode)
+  if (isESM) {
     try {
       return (await import(pathToFileURL(tempFileName).href)).default
     } finally {
