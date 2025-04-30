@@ -106,7 +106,7 @@ import { getAdditionalAllowedHosts } from './server/middlewares/hostCheck'
 import {
   ProxyImportMetaInCommonJs,
   ProxyImportMetaInEsm,
-} from './config/proxyImportMeta'
+} from './config/proxyImportMetav2'
 
 const debug = createDebugger('vite:config', { depth: 10 })
 const promisifiedRealpath = promisify(fs.realpath)
