@@ -104,8 +104,8 @@ import { createIdResolver } from './idResolver'
 import { runnerImport } from './ssr/runnerImport'
 import { getAdditionalAllowedHosts } from './server/middlewares/hostCheck'
 import {
-  ProxyImportMetaInCommonJs,
-  ProxyImportMetaInEsm,
+  ImportMetaProxyInCommonJs,
+  ImportMetaProxyInEsm,
 } from './config/proxyImportMetav2'
 
 const debug = createDebugger('vite:config', { depth: 10 })
@@ -1868,18 +1868,16 @@ async function bundleConfigFile(
   const dirnameVarName = '__vite_injected_original_dirname'
   const filenameVarName = '__vite_injected_original_filename'
 
+  const ClassImportMetaProxy = isESM
+    ? ImportMetaProxyInEsm
+    : ImportMetaProxyInCommonJs
   // __dirname and __filename should not be available in ESM, but we can't remove this for
   // backwards compatibility reasons
-  const define: Record<string, string> = {
+  const define = {
     __dirname: dirnameVarName,
     __filename: filenameVarName,
+    ...ClassImportMetaProxy.getDefines(),
   }
-  Object.assign(
-    define,
-    isESM
-      ? ProxyImportMetaInEsm.getDefines()
-      : ProxyImportMetaInCommonJs.getDefines(),
-  )
 
   const result = await build({
     absWorkingDir: process.cwd(),
@@ -1987,15 +1985,13 @@ async function bundleConfigFile(
         setup(build) {
           build.onLoad({ filter: /\.[cm]?[jt]s$/ }, async (args) => {
             const contents = await fsp.readFile(args.path, 'utf-8')
-            const proxyImportMeta = isESM
-              ? new ProxyImportMetaInEsm(args.path)
-              : new ProxyImportMetaInCommonJs()
+            const importMetaProxy = new ClassImportMetaProxy(args.path)
             const injectValues =
               `const ${dirnameVarName} = ${JSON.stringify(
                 path.dirname(args.path),
               )};` +
               `const ${filenameVarName} = ${JSON.stringify(args.path)};` +
-              proxyImportMeta.generate()
+              importMetaProxy.getCode()
 
             return {
               loader: args.path.endsWith('ts') ? 'ts' : 'js',
