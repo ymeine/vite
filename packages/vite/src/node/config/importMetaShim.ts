@@ -36,7 +36,7 @@ export class ImportMetaShim {
     return `
       import * as ${varProcess} from 'node:process'
       import * as ${varModule} from 'node:module'
-      const ${varRequire} = ${varModule}.createRequire(filePath)
+      const ${varRequire} = ${varModule}.createRequire(${filePath})
 
       const ${VAR_IMPORT_META_PROXY} = {
         dir: ${dirname},
